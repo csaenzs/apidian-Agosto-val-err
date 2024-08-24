@@ -40,6 +40,46 @@ class InvoiceController extends Controller
 {
     use DocumentTrait;
 
+    //validar estado de los servicios DIAN
+    private function verificarEstadoDIAN($url, $retries = 1)
+    {
+        $attempt = 0;
+        $backoff = 1; // Tiempo inicial de espera en segundos
+    
+        do {
+            try {
+                $client = new \GuzzleHttp\Client();
+                $response = $client->request('GET', $url, [
+                    'timeout' => 10,
+                    'connect_timeout' => 10,
+                    'read_timeout' => 10,
+                ]);
+    
+                // Si el código de estado es 200, la DIAN está disponible
+                return $response->getStatusCode() == 200;
+    
+            } catch (\GuzzleHttp\Exception\ConnectException $e) {
+                $attempt++;
+                if ($attempt >= $retries) {
+                    return false; // Regresa false si el número de intentos alcanza el máximo
+                }
+            } catch (\GuzzleHttp\Exception\RequestException $e) {
+                return false; // Regresa false en caso de un error en la solicitud
+            } catch (\Exception $e) {
+                return false; // Regresa false en caso de un error inesperado
+            }
+    
+            // Esperar un poco antes de intentar nuevamente, usando backoff exponencial
+            sleep($backoff);
+            $backoff *= 2; // Duplicar el tiempo de espera para el próximo intento
+    
+        } while ($attempt < $retries);
+    
+        return false; // Regresa false si todos los intentos fallan
+    }
+    
+    
+    
     public function preeliminarview(InvoiceRequest $request)
     {
         // User
@@ -213,6 +253,17 @@ class InvoiceController extends Controller
 
         // User company
         $company = $user->company;
+
+        // Verificar la disponibilidad de la DIAN antes de continuar
+        $dian_url = $company->software->url;
+        if (!$this->verificarEstadoDIAN($dian_url)) {
+            // Manejar la indisponibilidad del servicio, por ejemplo:
+            return [
+                'success' => false,
+                'message' => 'El servicio de la DIAN no está disponible en este momento. Por favor, inténtelo más tarde.',
+            ];
+        }
+        
 
         // Verify Certificate
         $certificate_days_left = 0;
